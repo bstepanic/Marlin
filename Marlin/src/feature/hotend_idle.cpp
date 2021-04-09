@@ -34,8 +34,8 @@
 
 #include "../module/temperature.h"
 #include "../module/motion.h"
-#include "../lcd/ultralcd.h"
 #include "../module/planner.h"
+#include "../lcd/marlinui.h"
 
 extern HotendIdleProtection hotend_idle;
 
