@@ -73,7 +73,7 @@
     current_position.set(0.0, 0.0);
     sync_plan_position();
 
-    const int x_axis_home_dir = x_home_dir(active_extruder);
+    const int x_axis_home_dir = TOOL_X_HOME_DIR(active_extruder);
 
     const float mlx = max_length(X_AXIS),
                 mly = max_length(Y_AXIS),
@@ -211,14 +211,16 @@ void GcodeSuite::G28() {
 
   TERN_(LASER_MOVE_G28_OFF, cutter.set_inline_enabled(false));  // turn off laser
 
+  TERN_(FULL_REPORT_TO_HOST_FEATURE, set_and_report_grblstate(M_HOMING));
+
   #if ENABLED(DUAL_X_CARRIAGE)
     bool IDEX_saved_duplication_state = extruder_duplication_enabled;
     DualXMode IDEX_saved_mode = dual_x_carriage_mode;
   #endif
 
   #if ENABLED(MARLIN_DEV_MODE)
-    if (parser.seen('S')) {
-      LOOP_XYZ(a) set_axis_is_at_home((AxisEnum)a);
+    if (parser.seen_test('S')) {
+      LOOP_LINEAR_AXES(a) set_axis_is_at_home((AxisEnum)a);
       sync_plan_position();
       SERIAL_ECHOLNPGM("Simulated Homing");
       report_current_position();
@@ -319,10 +321,10 @@ void GcodeSuite::G28() {
 
   #else
 
-    const bool homeZ = parser.seen('Z'),
+    const bool homeZ = parser.seen_test('Z'),
                needX = homeZ && TERN0(Z_SAFE_HOMING, axes_should_home(_BV(X_AXIS))),
                needY = homeZ && TERN0(Z_SAFE_HOMING, axes_should_home(_BV(Y_AXIS))),
-               homeX = needX || parser.seen('X'), homeY = needY || parser.seen('Y'),
+               homeX = needX || parser.seen_test('X'), homeY = needY || parser.seen_test('Y'),
                home_all = homeX == homeY && homeX == homeZ, // All or None
                doX = home_all || homeX, doY = home_all || homeY, doZ = home_all || homeZ;
 
@@ -478,6 +480,8 @@ void GcodeSuite::G28() {
 
   if (ENABLED(NANODLP_Z_SYNC) && (doZ || ENABLED(NANODLP_ALL_AXIS)))
     SERIAL_ECHOLNPGM(STR_Z_MOVE_COMP);
+
+  TERN_(FULL_REPORT_TO_HOST_FEATURE, set_and_report_grblstate(M_IDLE));
 
   #if HAS_L64XX
     // Set L6470 absolute position registers to counts

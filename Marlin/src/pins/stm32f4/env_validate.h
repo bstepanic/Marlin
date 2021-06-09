@@ -21,8 +21,20 @@
  */
 #pragma once
 
+<<<<<<< HEAD
+<<<<<<< HEAD:Marlin/src/pins/stm32f4/env_validate.h
+=======
+>>>>>>> upstream/2.0.x
 #if NOT_TARGET(STM32F4) && (DISABLED(ALLOW_STM32DUINO) || NOT_TARGET(STM32F4xx))
   #error "Oops! Select an STM32F4 board in 'Tools > Board.'"
 #endif
 
 #undef ALLOW_STM32DUINO
+<<<<<<< HEAD
+=======
+#define BOARD_INFO_NAME "BTT SKR V2 Rev.B"
+
+#include "pins_BTT_SKR_V2_0_common.h"
+>>>>>>> upstream/2.0.x:Marlin/src/pins/stm32f4/pins_BTT_SKR_V2_0_REV_B.h
+=======
+>>>>>>> upstream/2.0.x
