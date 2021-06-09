@@ -179,6 +179,10 @@ bool Stepper::abort_current_block;
 uint32_t Stepper::acceleration_time, Stepper::deceleration_time;
 uint8_t Stepper::steps_per_isr;
 
+#if HAS_FREEZE_PIN
+  bool Stepper::frozen; // = false
+#endif
+
 IF_DISABLED(ADAPTIVE_STEP_SMOOTHING, constexpr) uint8_t Stepper::oversampling_factor;
 
 xyze_long_t Stepper::delta_error{0};
@@ -255,13 +259,13 @@ xyze_int8_t Stepper::count_direction{0};
 
 #define DUAL_ENDSTOP_APPLY_STEP(A,V)                                                                                        \
   if (separate_multi_axis) {                                                                                                \
-    if (A##_HOME_DIR < 0) {                                                                                                 \
-      if (!(TEST(endstops.state(), A##_MIN) && count_direction[_AXIS(A)] < 0) && !locked_##A##_motor) A##_STEP_WRITE(V);    \
-      if (!(TEST(endstops.state(), A##2_MIN) && count_direction[_AXIS(A)] < 0) && !locked_##A##2_motor) A##2_STEP_WRITE(V); \
+    if (A##_HOME_TO_MIN) {                                                                                                  \
+      if (TERN0(HAS_##A##_MIN, !(TEST(endstops.state(), A##_MIN) && count_direction[_AXIS(A)] < 0) && !locked_##A##_motor)) A##_STEP_WRITE(V);     \
+      if (TERN0(HAS_##A##2_MIN, !(TEST(endstops.state(), A##2_MIN) && count_direction[_AXIS(A)] < 0) && !locked_##A##2_motor)) A##2_STEP_WRITE(V); \
     }                                                                                                                       \
     else {                                                                                                                  \
-      if (!(TEST(endstops.state(), A##_MAX) && count_direction[_AXIS(A)] > 0) && !locked_##A##_motor) A##_STEP_WRITE(V);    \
-      if (!(TEST(endstops.state(), A##2_MAX) && count_direction[_AXIS(A)] > 0) && !locked_##A##2_motor) A##2_STEP_WRITE(V); \
+      if (TERN0(HAS_##A##_MAX, !(TEST(endstops.state(), A##_MAX) && count_direction[_AXIS(A)] > 0) && !locked_##A##_motor)) A##_STEP_WRITE(V);     \
+      if (TERN0(HAS_##A##2_MAX, !(TEST(endstops.state(), A##2_MAX) && count_direction[_AXIS(A)] > 0) && !locked_##A##2_motor)) A##2_STEP_WRITE(V); \
     }                                                                                                                       \
   }                                                                                                                         \
   else {                                                                                                                    \
@@ -281,7 +285,7 @@ xyze_int8_t Stepper::count_direction{0};
 
 #define TRIPLE_ENDSTOP_APPLY_STEP(A,V)                                                                                      \
   if (separate_multi_axis) {                                                                                                \
-    if (A##_HOME_DIR < 0) {                                                                                                 \
+    if (A##_HOME_TO_MIN) {                                                                                                  \
       if (!(TEST(endstops.state(), A##_MIN) && count_direction[_AXIS(A)] < 0) && !locked_##A##_motor) A##_STEP_WRITE(V);    \
       if (!(TEST(endstops.state(), A##2_MIN) && count_direction[_AXIS(A)] < 0) && !locked_##A##2_motor) A##2_STEP_WRITE(V); \
       if (!(TEST(endstops.state(), A##3_MIN) && count_direction[_AXIS(A)] < 0) && !locked_##A##3_motor) A##3_STEP_WRITE(V); \
@@ -312,7 +316,7 @@ xyze_int8_t Stepper::count_direction{0};
 
 #define QUAD_ENDSTOP_APPLY_STEP(A,V)                                                                                        \
   if (separate_multi_axis) {                                                                                                \
-    if (A##_HOME_DIR < 0) {                                                                                                 \
+    if (A##_HOME_TO_MIN) {                                                                                                  \
       if (!(TEST(endstops.state(), A##_MIN) && count_direction[_AXIS(A)] < 0) && !locked_##A##_motor) A##_STEP_WRITE(V);    \
       if (!(TEST(endstops.state(), A##2_MIN) && count_direction[_AXIS(A)] < 0) && !locked_##A##2_motor) A##2_STEP_WRITE(V); \
       if (!(TEST(endstops.state(), A##3_MIN) && count_direction[_AXIS(A)] < 0) && !locked_##A##3_motor) A##3_STEP_WRITE(V); \
@@ -1531,6 +1535,9 @@ void Stepper::pulse_phase_isr() {
   // If there is no current block, do nothing
   if (!current_block) return;
 
+  // Skipping step processing causes motion to freeze
+  if (TERN0(HAS_FREEZE_PIN, frozen)) return;
+
   // Count of pending loops and events for this iteration
   const uint32_t pending_events = step_event_count - step_events_completed;
   uint8_t events_to_do = _MIN(pending_events, steps_per_isr);
@@ -1697,12 +1704,12 @@ void Stepper::pulse_phase_isr() {
       #if EITHER(LIN_ADVANCE, MIXING_EXTRUDER)
         delta_error.e += advance_dividend.e;
         if (delta_error.e >= 0) {
-          count_position.e += count_direction.e;
           #if ENABLED(LIN_ADVANCE)
             delta_error.e -= advance_divisor;
             // Don't step E here - But remember the number of steps to perform
             motor_direction(E_AXIS) ? --LA_steps : ++LA_steps;
           #else
+            count_position.e += count_direction.e;
             step_needed.e = true;
           #endif
         }
@@ -2283,15 +2290,23 @@ uint32_t Stepper::block_phase_isr() {
     #if ENABLED(MIXING_EXTRUDER)
       // We don't know which steppers will be stepped because LA loop follows,
       // with potentially multiple steps. Set all.
-      if (LA_steps > 0)
+      if (LA_steps > 0) {
         MIXER_STEPPER_LOOP(j) NORM_E_DIR(j);
-      else if (LA_steps < 0)
+        count_direction.e = 1;
+      }
+      else if (LA_steps < 0) {
         MIXER_STEPPER_LOOP(j) REV_E_DIR(j);
+        count_direction.e = -1;
+      }
     #else
-      if (LA_steps > 0)
+      if (LA_steps > 0) {
         NORM_E_DIR(stepper_extruder);
-      else if (LA_steps < 0)
+        count_direction.e = 1;
+      }
+      else if (LA_steps < 0) {
         REV_E_DIR(stepper_extruder);
+        count_direction.e = -1;
+      }
     #endif
 
     DIR_WAIT_AFTER();
@@ -2311,6 +2326,8 @@ uint32_t Stepper::block_phase_isr() {
         else
           AWAIT_LOW_PULSE();
       #endif
+
+      count_position.e += count_direction.e;
 
       // Set the STEP pulse ON
       #if ENABLED(MIXING_EXTRUDER)
